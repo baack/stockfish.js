@@ -7,6 +7,8 @@ compiled to JavaScript using
 [Emscripten](https://kripken.github.io/emscripten-site/). See it in action
 for [local computer analysis on lichess.org](https://de.lichess.org/analysis).
 
+Trimmed down and specialized for lichess local evaluation.
+
 Downloads
 ---------
 
