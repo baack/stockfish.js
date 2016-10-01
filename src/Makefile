@@ -105,6 +105,19 @@ ifeq ($(ARCH),js)
 	EXE = stockfish.js
 endif
 
+ifeq ($(ARCH),js-dev)
+	optimize = no
+	arch = any
+	os = any
+	bits = 32
+	prefetch = no
+	bsfq = no
+	popcnt = no
+	sse = no
+	COMP = emscripten
+	EXE = stockfish.js
+endif
+
 ifeq ($(ARCH),x86-64)
 	arch = x86_64
 	bits = 64
@@ -201,8 +214,15 @@ endif
 ifeq ($(COMP),emscripten)
 	comp=clang
 	CXX=em++
-	CXXFLAGS += -O3 -s TOTAL_MEMORY=33550000
-	LDFLAGS += -O3 -s TOTAL_MEMORY=33550000 --memory-init-file 0 -s NO_EXIT_RUNTIME=1 -s EXPORTED_FUNCTIONS="['_main', '_uci_command']" --pre-js pre.js --post-js post.js
+	CXXFLAGS += -s TOTAL_MEMORY=33550000
+	LDFLAGS += -s TOTAL_MEMORY=33550000 --memory-init-file 0 -s NO_EXIT_RUNTIME=1 -s EXPORTED_FUNCTIONS="['_main', '_uci_command']" --pre-js pre.js --post-js post.js
+	ifeq ($(optimize),yes)
+		CXXFLAGS += -O3
+		LDFLAGS += -O3
+	else
+		CXXFLAGS += -O0
+		LDFLAGS += -O0
+	endif
 endif
 
 ifeq ($(COMP),clang)
