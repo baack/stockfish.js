@@ -151,6 +151,12 @@ template<Color C, CastlingSide S> struct MakeCastling {
                      : S == QUEEN_SIDE ? BLACK_OOO : BLACK_OO;
 };
 
+#ifdef THREECHECK
+enum Checks {
+  CHECKS_0 = 0, CHECKS_1 = 1, CHECKS_2 = 2, CHECKS_3 = 3, CHECKS_NB = 4
+};
+#endif
+
 enum Phase {
   PHASE_ENDGAME,
   PHASE_MIDGAME = 128,
@@ -188,6 +194,14 @@ enum Value : int {
   BishopValueMg = 826,   BishopValueEg = 897,
   RookValueMg   = 1285,  RookValueEg   = 1371,
   QueenValueMg  = 2513,  QueenValueEg  = 2650,
+#ifdef ANTI
+  PawnValueMgAnti   = -300,  PawnValueEgAnti   = -300,
+  KnightValueMgAnti = -350,  KnightValueEgAnti = -500,
+  BishopValueMgAnti = -400,  BishopValueEgAnti = -200,
+  RookValueMgAnti   = -500,  RookValueEgAnti   = -100,
+  QueenValueMgAnti  = -400,  QueenValueEgAnti  = -600,
+  KingValueMgAnti   = -300,  KingValueEgAnti   = -300,
+#endif
 
   MidgameLimit  = 15258, EndgameLimit  = 3915
 };
@@ -301,6 +315,9 @@ ENABLE_FULL_OPERATORS_ON(Value)
 ENABLE_FULL_OPERATORS_ON(PieceType)
 ENABLE_FULL_OPERATORS_ON(Piece)
 ENABLE_FULL_OPERATORS_ON(Color)
+#ifdef THREECHECK
+ENABLE_FULL_OPERATORS_ON(Checks)
+#endif
 ENABLE_FULL_OPERATORS_ON(Depth)
 ENABLE_FULL_OPERATORS_ON(Square)
 ENABLE_FULL_OPERATORS_ON(File)
@@ -415,6 +432,10 @@ inline MoveType type_of(Move m) {
 }
 
 inline PieceType promotion_type(Move m) {
+#ifdef ANTI
+  if ((m >> 16) & 1)
+      return KING;
+#endif
   return PieceType(((m >> 12) & 3) + KNIGHT);
 }
 
@@ -424,6 +445,10 @@ inline Move make_move(Square from, Square to) {
 
 template<MoveType T>
 inline Move make(Square from, Square to, PieceType pt = KNIGHT) {
+#ifdef ANTI
+  if (pt == KING)
+      return Move(to | (from << 6) | T | ((pt - KNIGHT) << 12) | (1 << 16));
+#endif
   return Move(to | (from << 6) | T | ((pt - KNIGHT) << 12));
 }
 

@@ -25,6 +25,11 @@
 Value PieceValue[PHASE_NB][PIECE_NB] = {
 { VALUE_ZERO, PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg },
 { VALUE_ZERO, PawnValueEg, KnightValueEg, BishopValueEg, RookValueEg, QueenValueEg } };
+#ifdef ANTI
+Value PieceValueAnti[PHASE_NB][PIECE_NB] = {
+{ VALUE_ZERO, PawnValueMgAnti, KnightValueMgAnti, BishopValueMgAnti, RookValueMgAnti, QueenValueMgAnti, KingValueMgAnti },
+{ VALUE_ZERO, PawnValueEgAnti, KnightValueEgAnti, BishopValueEgAnti, RookValueEgAnti, QueenValueEgAnti, KingValueEgAnti } };
+#endif
 
 namespace PSQT {
 
@@ -100,6 +105,9 @@ const Score Bonus[][RANK_NB][int(FILE_NB) / 2] = {
 #undef S
 
 Score psq[PIECE_NB][SQUARE_NB];
+#ifdef ANTI
+Score psqAnti[PIECE_NB][SQUARE_NB];
+#endif
 
 // init() initializes piece-square tables: the white halves of the tables are
 // copied from Bonus[] adding the piece value, then the black halves of the
@@ -112,12 +120,19 @@ void init() {
       PieceValue[EG][~pc] = PieceValue[EG][pc];
 
       Score v = make_score(PieceValue[MG][pc], PieceValue[EG][pc]);
+#ifdef ANTI
+      Score vAnti = make_score(PieceValueAnti[MG][pc], PieceValueAnti[EG][pc]);
+#endif
 
       for (Square s = SQ_A1; s <= SQ_H8; ++s)
       {
           File f = std::min(file_of(s), FILE_H - file_of(s));
           psq[ pc][ s] = v + Bonus[pc][rank_of(s)][f];
           psq[~pc][~s] = -psq[pc][s];
+#ifdef ANTI
+          psqAnti[ pc][ s] = vAnti + Bonus[pc][rank_of(s)][f];
+          psqAnti[~pc][~s] = -psqAnti[pc][s];
+#endif
       }
   }
 }

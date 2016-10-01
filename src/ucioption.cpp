@@ -78,12 +78,33 @@ void init(OptionsMap& o) {
   o["Slow Mover"]            << Option(89, 10, 1000);
   o["nodestime"]             << Option(0, 0, 10000);
   o["UCI_Chess960"]          << Option(false);
+#ifdef ATOMIC
+  o["UCI_Atomic"]            << Option(false);
+#endif
+#ifdef HORDE
+  o["UCI_Horde"]             << Option(false);
+#endif
+#ifdef HOUSE
+  o["UCI_House"]             << Option(false);
+#endif
+#ifdef KOTH
+  o["UCI_KingOfTheHill"]     << Option(false);
+#endif
+#ifdef RACE
+  o["UCI_Race"]              << Option(false);
+#endif
+#ifdef THREECHECK
+  o["UCI_3Check"]            << Option(false);
+#endif
+#ifdef ANTI
+  o["UCI_Anti"]              << Option(false);
+#endif
 #ifndef __EMSCRIPTEN__
   o["SyzygyPath"]            << Option("<empty>", on_tb_path);
   o["SyzygyProbeDepth"]      << Option(1, 1, 100);
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(6, 0, 6);
-#endif
+#endif  // #ifndef __EMSCRIPTEN__
 }
 
 

@@ -274,9 +274,29 @@ void MainThread::search() {
   if (rootMoves.empty())
   {
       rootMoves.push_back(RootMove(MOVE_NONE));
-      sync_cout << "info depth 0 score "
-                << UCI::value(rootPos.checkers() ? -VALUE_MATE : VALUE_DRAW)
-                << sync_endl;
+      Value score = rootPos.checkers() ? -VALUE_MATE : VALUE_DRAW;
+#ifdef KOTH
+      if (rootPos.is_koth() && rootPos.is_koth_loss())
+          score = -VALUE_MATE;
+#endif
+#ifdef RACE
+      if (rootPos.is_race())
+          score =  rootPos.is_race_draw() ? VALUE_DRAW
+                 : rootPos.is_race_loss() ? -VALUE_MATE : VALUE_MATE;
+#endif
+#ifdef HORDE
+      if (rootPos.is_horde() && rootPos.is_horde_loss())
+          score = -VALUE_MATE;
+#endif
+#ifdef ATOMIC
+      if (rootPos.is_atomic() && rootPos.is_atomic_loss())
+          score = -VALUE_MATE;
+#endif
+#ifdef ANTI
+      if (rootPos.is_anti())
+          score = rootPos.is_anti_loss() ? -VALUE_MATE : VALUE_MATE;
+#endif
+      sync_cout << "info depth 0 score " << UCI::value(score) << sync_endl;
   }
   else
   {
@@ -334,6 +354,7 @@ void MainThread::after_search() {
   if (bestThread != this)
       sync_cout << UCI::pv(bestThread->rootPos, bestThread->completedDepth, -VALUE_INFINITE, VALUE_INFINITE) << sync_endl;
 
+  // Best move could be MOVE_NONE when searching on a terminal position
   sync_cout << "bestmove " << UCI::move(bestThread->rootMoves[0].pv[0], rootPos.is_chess960());
 
   if (bestThread->rootMoves[0].pv.size() > 1 || bestThread->rootMoves[0].extract_ponder_from_tt(rootPos))
@@ -625,10 +646,18 @@ namespace {
     bool captureOrPromotion, doFullDepthSearch, moveCountPruning;
     Piece moved_piece;
     int moveCount, quietCount;
+    int variantScale;
 
     // Step 1. Initialize node
     Thread* thisThread = pos.this_thread();
     inCheck = pos.checkers();
+#ifdef RACE
+    int raceRank = pos.is_race() ?
+        rank_of(pos.square<KING>(pos.side_to_move())) + rank_of(pos.square<KING>(~pos.side_to_move())) : 0;
+#endif
+#ifdef THREECHECK
+    int checks = pos.is_three_check() ? pos.checks_count() : CHECKS_0;
+#endif
     moveCount = quietCount =  ss->moveCount = 0;
     bestValue = -VALUE_INFINITE;
     ss->ply = (ss-1)->ply + 1;
@@ -653,6 +682,59 @@ namespace {
 
     if (!rootNode)
     {
+#ifdef KOTH
+        // Check for an instant win/loss (King of the Hill)
+        if (pos.is_koth())
+        {
+            if (pos.is_koth_win())
+                return mate_in(ss->ply + 1);
+            if (pos.is_koth_loss())
+                return mated_in(ss->ply);
+        }
+#endif
+#ifdef RACE
+        // Check for an instant win/loss (Racing Kings)
+        if (pos.is_race())
+        {
+            if (pos.is_race_draw())
+                return DrawValue[pos.side_to_move()];
+            if (pos.is_race_win())
+                return mate_in(ss->ply + 1);
+            if (pos.is_race_loss())
+                return mated_in(ss->ply);
+        }
+#endif
+#ifdef THREECHECK
+        // Check for an instant win/loss (Three-Check)
+        if (pos.is_three_check())
+        {
+            if (pos.is_three_check_win())
+                return mate_in(ss->ply + 1);
+            if (pos.is_three_check_loss())
+                return mated_in(ss->ply);
+        }
+#endif
+#ifdef HORDE
+        // Check for an instant loss (Horde)
+        if (pos.is_horde() && pos.is_horde_loss())
+            return mated_in(ss->ply);
+#endif
+#ifdef ANTI
+        // Check for an instant loss (Anti)
+        if (pos.is_anti())
+        {
+            if (pos.is_anti_win())
+                return mate_in(ss->ply + 1);
+            if (pos.is_anti_loss())
+                return mated_in(ss->ply);
+        }
+#endif
+#ifdef ATOMIC
+        // Check for an instant loss (Atomic)
+        if (pos.is_atomic() && pos.is_atomic_loss())
+            return mated_in(ss->ply);
+#endif
+
         // Step 2. Check for aborted search and immediate draw
         if (Signals.stop.load(std::memory_order_relaxed) || pos.is_draw() || ss->ply >= MAX_PLY)
             return ss->ply >= MAX_PLY && !inCheck ? evaluate(pos)
@@ -721,6 +803,24 @@ namespace {
 
 #ifndef __EMSCRIPTEN__
     // Step 4a. Tablebase probe
+#ifdef KOTH
+    if (pos.is_koth()) {} else
+#endif
+#ifdef RACE
+    if (pos.is_race()) {} else
+#endif
+#ifdef THREECHECK
+    if (pos.is_three_check()) {} else
+#endif
+#ifdef HORDE
+    if (pos.is_horde()) {} else
+#endif
+#ifdef ATOMIC
+    if (pos.is_atomic()) {} else
+#endif
+#ifdef ANTI
+    if (pos.is_anti()) {} else
+#endif
     if (!rootNode && TB::Cardinality)
     {
         int piecesCnt = pos.count<ALL_PIECES>(WHITE) + pos.count<ALL_PIECES>(BLACK);
@@ -784,16 +884,33 @@ namespace {
         goto moves_loop;
 
     // Step 6. Razoring (skipped when in check)
+    variantScale = 1;
+#ifdef ATOMIC
+    if (pos.is_atomic())
+        variantScale += 3;
+#endif
+#ifdef ANTI
+    if (pos.is_anti())
+        variantScale += 3;
+#endif
+#ifdef RACE
+    if (pos.is_race())
+        variantScale += raceRank / 2;
+#endif
+#ifdef THREECHECK
+    if (pos.is_three_check())
+        variantScale += checks;
+#endif
     if (   !PvNode
         &&  depth < 4 * ONE_PLY
         &&  ttMove == MOVE_NONE
-        &&  eval + razor_margin[depth / ONE_PLY] <= alpha)
+        &&  eval + (razor_margin[depth / ONE_PLY] * variantScale) <= alpha)
     {
         if (   depth <= ONE_PLY
-            && eval + razor_margin[3 * ONE_PLY] <= alpha)
+            && eval + (razor_margin[3 * ONE_PLY] * variantScale) <= alpha)
             return qsearch<NonPV, false>(pos, ss, alpha, beta, DEPTH_ZERO);
 
-        Value ralpha = alpha - razor_margin[depth / ONE_PLY];
+        Value ralpha = alpha - (razor_margin[depth / ONE_PLY] * variantScale);
         Value v = qsearch<NonPV, false>(pos, ss, ralpha, ralpha+1, DEPTH_ZERO);
         if (v <= ralpha)
             return v;
@@ -802,12 +919,15 @@ namespace {
     // Step 7. Futility pruning: child node (skipped when in check)
     if (   !rootNode
         &&  depth < 7 * ONE_PLY
-        &&  eval - futility_margin(depth) >= beta
+        &&  eval - (futility_margin(depth) * variantScale) >= beta
         &&  eval < VALUE_KNOWN_WIN  // Do not return unproven wins
         &&  pos.non_pawn_material(pos.side_to_move()))
-        return eval - futility_margin(depth);
+        return eval - (futility_margin(depth) * variantScale);
 
     // Step 8. Null move search with verification search (is omitted in PV nodes)
+#ifdef ANTI
+    if (pos.is_anti() && pos.can_capture()) {} else
+#endif
     if (   !PvNode
         &&  eval >= beta
         && (ss->staticEval >= beta - 35 * (depth / ONE_PLY - 6) || depth >= 13 * ONE_PLY)
@@ -851,8 +971,23 @@ namespace {
     // Step 9. ProbCut (skipped when in check)
     // If we have a good enough capture and a reduced search returns a value
     // much above beta, we can (almost) safely prune the previous move.
+#ifdef ANTI
+    if (pos.is_anti()) {} else
+#endif
     if (   !PvNode
+#ifdef RACE
+#ifdef THREECHECK
+        &&  depth >= (5 + checks + raceRank) * ONE_PLY
+#else
+        &&  depth >= (5 + raceRank) * ONE_PLY
+#endif
+#else
+#ifdef THREECHECK
+        &&  depth >= (5 + checks) * ONE_PLY
+#else
         &&  depth >= 5 * ONE_PLY
+#endif
+#endif
         &&  abs(beta) < VALUE_MATE_IN_MAX_PLY)
     {
         Value rbeta = std::min(beta + 200, VALUE_INFINITE);
@@ -904,7 +1039,19 @@ moves_loop: // When in check search starts from here
                ||(ss-2)->staticEval == VALUE_NONE;
 
     singularExtensionNode =   !rootNode
+#ifdef RACE
+#ifdef THREECHECK
+                           &&  depth >= 8 * ONE_PLY - checks - raceRank
+#else
+                           &&  depth >= 8 * ONE_PLY - raceRank
+#endif
+#else
+#ifdef THREECHECK
+                           &&  depth >= 8 * ONE_PLY - checks
+#else
                            &&  depth >= 8 * ONE_PLY
+#endif
+#endif
                            &&  ttMove != MOVE_NONE
                        /*  &&  ttValue != VALUE_NONE Already implicit in the next condition */
                            &&  abs(ttValue) < VALUE_KNOWN_WIN
@@ -943,10 +1090,28 @@ moves_loop: // When in check search starts from here
       moved_piece = pos.moved_piece(move);
 
       givesCheck =  type_of(move) == NORMAL && !pos.discovered_check_candidates()
+#ifdef ATOMIC
+                  && !pos.is_atomic()
+#endif
+#ifdef ANTI
+                  && !pos.is_anti()
+#endif
                   ? pos.check_squares(type_of(pos.piece_on(from_sq(move)))) & to_sq(move)
                   : pos.gives_check(move);
 
+#ifdef RACE
+#ifdef THREECHECK
+      moveCountPruning =   depth < (16 - checks - raceRank) * ONE_PLY
+#else
+      moveCountPruning =   depth < (16 - raceRank) * ONE_PLY
+#endif
+#else
+#ifdef THREECHECK
+      moveCountPruning =   depth < (16 - checks) * ONE_PLY
+#else
       moveCountPruning =   depth < 16 * ONE_PLY
+#endif
+#endif
                         && moveCount >= FutilityMoveCounts[improving][depth / ONE_PLY];
 
       // Step 12. Extend checks
@@ -981,6 +1146,9 @@ moves_loop: // When in check search starts from here
       newDepth = depth - ONE_PLY + extension;
 
       // Step 13. Pruning at shallow depth
+#ifdef RACE
+      if (pos.is_race() && type_of(moved_piece) == KING && rank_of(to_sq(move)) > rank_of(from_sq(move))) {} else
+#endif
       if (   !rootNode
           && !captureOrPromotion
           && !inCheck
@@ -995,19 +1163,52 @@ moves_loop: // When in check search starts from here
           predictedDepth = std::max(newDepth - reduction<PvNode>(improving, depth, moveCount), DEPTH_ZERO);
 
           // Countermoves based pruning
+#ifdef RACE
+#ifdef THREECHECK
+          if (   predictedDepth < 3 * ONE_PLY - checks - raceRank
+#else
+          if (   predictedDepth < 3 * ONE_PLY - raceRank
+#endif
+#else
+#ifdef THREECHECK
+          if (   predictedDepth < 3 * ONE_PLY - checks
+#else
           if (   predictedDepth < 3 * ONE_PLY
+#endif
+#endif
               && (!cmh  || (*cmh )[moved_piece][to_sq(move)] < VALUE_ZERO)
               && (!fmh  || (*fmh )[moved_piece][to_sq(move)] < VALUE_ZERO)
               && (!fmh2 || (*fmh2)[moved_piece][to_sq(move)] < VALUE_ZERO || (cmh && fmh)))
               continue;
 
           // Futility pruning: parent node
+#ifdef RACE
+#ifdef THREECHECK
+          if (   predictedDepth < (7 - checks - raceRank) * ONE_PLY
+#else
+          if (   predictedDepth < (7 - raceRank) * ONE_PLY
+#endif
+#else
+#ifdef THREECHECK
+          if (   predictedDepth < (7 - checks) * ONE_PLY
+#else
           if (   predictedDepth < 7 * ONE_PLY
+#endif
+#endif
               && ss->staticEval + 256 + 200 * predictedDepth / ONE_PLY <= alpha)
               continue;
 
           // Prune moves with negative SEE at low depths and below a decreasing
           // threshold at higher depths.
+#ifdef ANTI
+          if (pos.is_anti()) {} else
+#endif
+#ifdef ATOMIC
+          if (pos.is_atomic()) {} else
+#endif
+#ifdef RACE
+          if (pos.is_race()) {} else
+#endif
           if (predictedDepth < 8 * ONE_PLY)
           {
               Value see_v = predictedDepth < 4 * ONE_PLY ? VALUE_ZERO
@@ -1036,7 +1237,19 @@ moves_loop: // When in check search starts from here
 
       // Step 15. Reduced depth search (LMR). If the move fails high it will be
       // re-searched at full depth.
+#ifdef RACE
+#ifdef THREECHECK
+      if (    depth >= (3 + checks + raceRank) * ONE_PLY
+#else
+      if (    depth >= (3 + raceRank) * ONE_PLY
+#endif
+#else
+#ifdef THREECHECK
+      if (    depth >= (3 + checks) * ONE_PLY
+#else
       if (    depth >= 3 * ONE_PLY
+#endif
+#endif
           &&  moveCount > 1
           && (!captureOrPromotion || moveCountPruning))
       {
@@ -1185,8 +1398,27 @@ moves_loop: // When in check search starts from here
     // must be a mate or a stalemate. If we are in a singular extension search then
     // return a fail low score.
     if (!moveCount)
+    {
+#ifdef RACE
+        if (pos.is_race() && (pos.is_race_draw() || pos.is_race_loss() || pos.is_race_win()))
+            bestValue = excludedMove ? alpha
+                : pos.is_race_draw() ? DrawValue[pos.side_to_move()]
+                : pos.is_race_loss() ? mated_in(ss->ply) : mate_in(ss->ply+1);
+        else
+#endif
+#ifdef HORDE
+        if (pos.is_horde() && pos.is_horde_loss())
+            bestValue = excludedMove ? alpha : mated_in(ss->ply);
+        else
+#endif
+#ifdef ANTI
+        if (pos.is_anti())
+            bestValue = excludedMove ? alpha : mate_in(ss->ply+1);
+        else
+#endif
         bestValue = excludedMove ? alpha
                    :     inCheck ? mated_in(ss->ply) : DrawValue[pos.side_to_move()];
+    }
     else if (bestMove)
     {
         int d = depth / ONE_PLY;
@@ -1237,7 +1469,11 @@ moves_loop: // When in check search starts from here
 
     const bool PvNode = NT == PV;
 
+#ifdef ATOMIC
+    assert((pos.is_atomic() && pos.is_atomic_loss()) || InCheck == !!pos.checkers());
+#else
     assert(InCheck == !!pos.checkers());
+#endif
     assert(alpha >= -VALUE_INFINITE && alpha < beta && beta <= VALUE_INFINITE);
     assert(PvNode || (alpha == beta - 1));
     assert(depth <= DEPTH_ZERO);
@@ -1261,6 +1497,67 @@ moves_loop: // When in check search starts from here
 
     ss->currentMove = bestMove = MOVE_NONE;
     ss->ply = (ss-1)->ply + 1;
+
+#ifdef KOTH
+    // Check for an instant win or loss (King of the Hill)
+    if (pos.is_koth())
+    {
+        if (pos.is_koth_win())
+            return mate_in(ss->ply+1);
+        if (pos.is_koth_loss())
+            return mated_in(ss->ply);
+    }
+#endif
+#ifdef RACE
+    // Check for an instant win/loss (Racing Kings)
+    if (pos.is_race())
+    {
+        if (pos.is_race_draw())
+            return DrawValue[pos.side_to_move()];
+        if (pos.is_race_win())
+            return mate_in(ss->ply+1);
+        if (pos.is_race_loss())
+            return mated_in(ss->ply);
+    }
+#endif
+#ifdef THREECHECK
+    // Check for an instant win (Three-Check)
+    if (pos.is_three_check())
+    {
+        if (pos.is_three_check_win())
+            return mate_in(ss->ply + 1);
+        if (pos.is_three_check_loss())
+            return mated_in(ss->ply);
+    }
+#endif
+#ifdef HORDE
+    // Check for an instant win (Horde)
+    if (pos.is_horde())
+    {
+        if (pos.is_horde_loss())
+            return mated_in(ss->ply);
+    }
+#endif
+#ifdef ATOMIC
+    // Check for an instant win (Atomic)
+    if (pos.is_atomic())
+    {
+        if (pos.is_atomic_win())
+            return mate_in(ss->ply + 1);
+        if (pos.is_atomic_loss())
+            return mated_in(ss->ply);
+    }
+#endif
+#ifdef ANTI
+    // Check for an instant win (Anti)
+    if (pos.is_anti())
+    {
+        if (pos.is_anti_win())
+            return mate_in(ss->ply + 1);
+        if (pos.is_anti_loss())
+            return mated_in(ss->ply);
+    }
+#endif
 
     // Check for an instant draw or if the maximum ply has been reached
     if (pos.is_draw() || ss->ply >= MAX_PLY)
@@ -1343,7 +1640,18 @@ moves_loop: // When in check search starts from here
     {
       assert(is_ok(move));
 
+#ifdef RACE
+      if (pos.is_race())
+          givesCheck = type_of(pos.piece_on(from_sq(move))) == KING && rank_of(to_sq(move)) == RANK_8;
+      else
+#endif
       givesCheck =  type_of(move) == NORMAL && !pos.discovered_check_candidates()
+#ifdef ATOMIC
+                  && !pos.is_atomic()
+#endif
+#ifdef ANTI
+                  && !pos.is_anti()
+#endif
                   ? pos.check_squares(type_of(pos.piece_on(from_sq(move)))) & to_sq(move)
                   : pos.gives_check(move);
 
@@ -1396,6 +1704,8 @@ moves_loop: // When in check search starts from here
                          : -qsearch<NT, false>(pos, ss+1, -beta, -alpha, depth - ONE_PLY);
       pos.undo_move(move);
 
+      assert(value > -VALUE_INFINITE);
+      assert(value < VALUE_INFINITE);
       assert(value > -VALUE_INFINITE && value < VALUE_INFINITE);
 
       // Check for a new best move
@@ -1475,7 +1785,6 @@ moves_loop: // When in check search starts from here
 
 
   // update_cm_stats() updates countermove and follow-up move history
-
   void update_cm_stats(Stack* ss, Piece pc, Square s, Value bonus) {
 
     CounterMoveStats* cmh  = (ss-1)->counterMoves;
@@ -1538,7 +1847,7 @@ moves_loop: // When in check search starts from here
     // RootMoves are already sorted by score in descending order
     Value topScore = rootMoves[0].score;
     int delta = std::min(topScore - rootMoves[multiPV - 1].score, PawnValueMg);
-    int weakness = 120 - 2 * level;
+    int weakness = 125 - level * 9/4;
     int maxScore = -VALUE_INFINITE;
 
     // Choose best move. For each move score we add two terms, both dependent on
@@ -1656,6 +1965,8 @@ bool RootMove::extract_ponder_from_tt(Position& pos)
     bool ttHit;
 
     assert(pv.size() == 1);
+    if (pv[0] == MOVE_NONE) // Not pondering
+        return false;
 
     pos.do_move(pv[0], st, pos.gives_check(pv[0]));
     TTEntry* tte = TT.probe(pos.key(), ttHit);

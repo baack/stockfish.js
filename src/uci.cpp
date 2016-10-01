@@ -36,8 +36,16 @@ extern void benchmark(const Position& pos, istream& is);
 
 namespace {
 
-  // FEN string of the initial position, normal chess
+  // FEN string of the initial position, normal variant
   const char* StartFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+#ifdef HORDE
+  // FEN string of the initial position, horde variant
+  const char* StartFENHorde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
+#endif
+#ifdef RACE
+  // FEN string of the initial position, race variant
+  const char* StartFENRace = "8/8/8/8/8/8/krbnNBRK/qrbnNBRQ w - - 0 1";
+#endif
 
   // A list to keep track of the position states along the setup moves (from the
   // start position to the position just before the search starts). Needed by
@@ -55,11 +63,52 @@ namespace {
     Move m;
     string token, fen;
 
-    is >> token;
+    int variant = STANDARD_VARIANT;
+    if (Options["UCI_Chess960"])
+        variant |= CHESS960_VARIANT;
+#ifdef ATOMIC
+    if (Options["UCI_Atomic"])
+        variant |= ATOMIC_VARIANT;
+#endif
+#ifdef HORDE
+    if (Options["UCI_Horde"])
+        variant |= HORDE_VARIANT;
+#endif
+#ifdef HOUSE
+    if (Options["UCI_House"])
+        variant |= HOUSE_VARIANT;
+#endif
+#ifdef KOTH
+    if (Options["UCI_KingOfTheHill"])
+        variant |= KOTH_VARIANT;
+#endif
+#ifdef RACE
+    if (Options["UCI_Race"])
+        variant |= RACE_VARIANT;
+#endif
+#ifdef THREECHECK
+    if (Options["UCI_3Check"])
+        variant |= THREECHECK_VARIANT;
+#endif
+#ifdef ANTI
+    if (Options["UCI_Anti"])
+        variant |= ANTI_VARIANT;
+#endif
 
+    is >> token;
     if (token == "startpos")
     {
+#ifdef HORDE
+        if(variant & HORDE_VARIANT)
+            fen = StartFENHorde;
+        else
+#ifdef RACE
+        if(variant & RACE_VARIANT)
+            fen = StartFENRace;
+        else
+#endif
         fen = StartFEN;
+#endif
         is >> token; // Consume "moves" token if any
     }
     else if (token == "fen")
@@ -69,7 +118,7 @@ namespace {
         return;
 
     States = StateListPtr(new std::deque<StateInfo>(1));
-    pos.set(fen, Options["UCI_Chess960"], &States->back(), Threads.main());
+    pos.set(fen, variant, &States->back(), Threads.main());
 
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
@@ -86,7 +135,6 @@ namespace {
   void setoption(istringstream& is) {
 
     string token, name, value;
-
     is >> token; // Consume "name" token
 
     // Read option name (can contain spaces)
@@ -206,6 +254,7 @@ extern "C" void uci_command(const char *c_cmd) {
       else if (token == "setoption")  setoption(is);
 
       // Additional custom non-UCI commands, useful for debugging
+#ifndef __EMSCRIPTEN__
       else if (token == "flip")       pos.flip();
       else if (token == "bench")      benchmark(pos, is);
       else if (token == "d")          sync_cout << pos << sync_endl;
@@ -221,6 +270,7 @@ extern "C" void uci_command(const char *c_cmd) {
 
           benchmark(pos, ss);
       }
+#endif
       else
           sync_cout << "Unknown command: " << cmd << sync_endl;
 #ifndef __EMSCRIPTEN__
