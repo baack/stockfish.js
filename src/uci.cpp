@@ -18,8 +18,7 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <iostream>
-#include <sstream>
+#include <stdio.h>
 #include <string>
 
 #include "evaluate.h"
@@ -148,7 +147,7 @@ namespace {
     if (Options.count(name))
         Options[name] = value;
     else
-        sync_cout << "No such option: " << name << sync_endl;
+        printf("No such option");
   }
 
 
@@ -239,40 +238,18 @@ extern "C" void uci_command(const char *c_cmd) {
           Search::Limits.ponder = 0; // Switch to normal search
 
       else if (token == "uci")
-          sync_cout << "id name " << engine_info(true)
-                    << "\n"       << Options
-                    << "\nuciok"  << sync_endl;
+          printf("uciok");
 
       else if (token == "ucinewgame")
       {
           Search::clear();
           Time.availableNodes = 0;
       }
-      else if (token == "isready")    sync_cout << "readyok" << sync_endl;
       else if (token == "go")         go(pos, is);
       else if (token == "position")   position(pos, is);
       else if (token == "setoption")  setoption(is);
-
-      // Additional custom non-UCI commands, useful for debugging
-#ifndef __EMSCRIPTEN__
-      else if (token == "flip")       pos.flip();
-      else if (token == "bench")      benchmark(pos, is);
-      else if (token == "d")          sync_cout << pos << sync_endl;
-      else if (token == "eval")       sync_cout << Eval::trace(pos) << sync_endl;
-      else if (token == "perft")
-      {
-          int depth;
-          stringstream ss;
-
-          is >> depth;
-          ss << Options["Hash"]    << " "
-             << Options["Threads"] << " " << depth << " current perft";
-
-          benchmark(pos, ss);
-      }
-#endif
       else
-          sync_cout << "Unknown command: " << cmd << sync_endl;
+          printf("Unknown command");
 #ifndef __EMSCRIPTEN__
 
   } while (token != "quit" && argc == 1); // Passed args have one-shot behaviour
